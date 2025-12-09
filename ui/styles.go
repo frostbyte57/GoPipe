@@ -15,6 +15,7 @@ var (
 	// Let's keep Success Green for semantics, or Cyanish.
 	ColorText  = lipgloss.Color("#FFFFFF")
 	ColorError = lipgloss.Color("#FF5F87")
+	ColorGreen = lipgloss.Color("#04B575")
 
 	// Text Styles
 	TitleStyle = lipgloss.NewStyle().

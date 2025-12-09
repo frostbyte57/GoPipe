@@ -51,9 +51,14 @@ func NewSendModel(mailboxURL string) SendModel {
 	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorGoBlue)
 
-	prog := progress.New(progress.WithDefaultGradient())
-	prog.Width = 40
-	prog.ShowPercentage = false
+	prog := progress.New(
+		progress.WithSolidFill(string(ColorGreen)),
+		progress.WithWidth(40),
+		progress.WithoutPercentage(),
+	)
+	prog.Full = '█'
+	prog.Empty = '░'
+	prog.EmptyColor = string(ColorSubtle)
 
 	return SendModel{
 		textInput:   ti,

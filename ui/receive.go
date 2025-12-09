@@ -50,9 +50,14 @@ func NewReceiveModel(mailboxURL string) ReceiveModel {
 	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorGoBlue)
 
-	prog := progress.New(progress.WithDefaultGradient())
-	prog.Width = 40
-	prog.ShowPercentage = false
+	prog := progress.New(
+		progress.WithSolidFill(string(ColorGreen)),
+		progress.WithWidth(40),
+		progress.WithoutPercentage(),
+	)
+	prog.Full = '█'
+	prog.Empty = '░'
+	prog.EmptyColor = string(ColorSubtle)
 
 	return ReceiveModel{
 		textInput:   ti,
@@ -240,6 +245,19 @@ func startReceiveTransfer(c *wormhole.Client) tea.Cmd {
 			}
 
 			outPath := filepath.Join(outDir, meta.Name)
+
+			// Auto-rename if exists
+			ext := filepath.Ext(meta.Name)
+			nameOnly := meta.Name[:len(meta.Name)-len(ext)]
+			counter := 1
+			for {
+				if _, err := os.Stat(outPath); os.IsNotExist(err) {
+					break
+				}
+				outPath = filepath.Join(outDir, fmt.Sprintf("%s (%d)%s", nameOnly, counter, ext))
+				counter++
+			}
+
 			out, err := os.Create(outPath)
 			if err != nil {
 				errChan <- err
@@ -277,7 +295,7 @@ func startReceiveTransfer(c *wormhole.Client) tea.Cmd {
 			}
 
 			// Send filename to resultChan
-			resultChan <- meta.Name
+			resultChan <- filepath.Base(outPath)
 		}()
 
 		return ReceiveTransferStartedMsg{
