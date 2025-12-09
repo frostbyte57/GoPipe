@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,7 +25,13 @@ func NewSettingsModel() SettingsModel {
 	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorGoBlue)
 
-	cfg, _ := config.LoadConfig() // Ignore error, use default
+	var cfg *config.Config
+	var err error
+	cfg, err = config.LoadConfig()
+	if err != nil || cfg == nil {
+		home, _ := os.UserHomeDir()
+		cfg = &config.Config{DownloadDir: home}
+	}
 	if cfg != nil {
 		ti.SetValue(cfg.DownloadDir)
 	}
@@ -47,7 +54,7 @@ func (m SettingsModel) Update(msg tea.Msg) (SettingsModel, tea.Cmd) {
 			if err := config.SaveConfig(m.cfg); err != nil {
 				m.status = fmt.Sprintf("Error saving: %v", err)
 			} else {
-				m.status = "Settings Saved!"
+				m.status = StatusStyle.Foreground(ColorSuccess).Render("Settings Saved!")
 			}
 			return m, nil // OR return to menu logic?
 		case tea.KeyEsc:
