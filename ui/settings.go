@@ -49,14 +49,27 @@ func (m SettingsModel) Update(msg tea.Msg) (SettingsModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEnter:
-			// Save
-			m.cfg.DownloadDir = m.textInput.Value()
-			if err := config.SaveConfig(m.cfg); err != nil {
-				m.status = fmt.Sprintf("Error saving: %v", err)
+			// Validate directory
+			path := m.textInput.Value()
+			info, err := os.Stat(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					m.status = StatusStyle.Foreground(ColorError).Render("Error: Directory does not exist")
+				} else {
+					m.status = StatusStyle.Foreground(ColorError).Render(fmt.Sprintf("Error: %v", err))
+				}
+			} else if !info.IsDir() {
+				m.status = StatusStyle.Foreground(ColorError).Render("Error: Path is not a directory")
 			} else {
-				m.status = StatusStyle.Foreground(ColorSuccess).Render("Settings Saved!")
+				// Save
+				m.cfg.DownloadDir = path
+				if err := config.SaveConfig(m.cfg); err != nil {
+					m.status = StatusStyle.Foreground(ColorError).Render(fmt.Sprintf("Error saving: %v", err))
+				} else {
+					m.status = StatusStyle.Foreground(ColorSuccess).Render("Settings Saved!")
+				}
 			}
-			return m, nil // OR return to menu logic?
+			return m, nil
 		case tea.KeyEsc:
 			return m, nil // handled by parent to go back
 		}

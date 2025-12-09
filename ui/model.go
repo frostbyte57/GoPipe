@@ -23,6 +23,7 @@ type Model struct {
 	sendModel     SendModel
 	receiveModel  ReceiveModel
 	settingsModel SettingsModel
+	confirmExit   bool
 }
 
 func InitialModel(mailboxURL string) Model {
@@ -42,10 +43,16 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Global Quit
+		// Global Quit with Double Ctrl-C
 		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
+			if m.confirmExit {
+				return m, tea.Quit
+			}
+			m.confirmExit = true
+			return m, nil // Trigger view update to show warning
 		}
+		// Reset valid flag on any other key
+		m.confirmExit = false
 
 		// If in Menu
 		if m.state == StateMenu {
@@ -109,6 +116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	var content string
 	switch m.state {
 	case StateMenu:
 		s := RenderLogo() + "\n\n"
@@ -131,13 +139,19 @@ func (m Model) View() string {
 		}
 
 		s += HelpStyle.Render("\nPress q to quit.\n")
-		return s
+		content = s
 	case StateSend:
-		return m.sendModel.View()
+		content = m.sendModel.View()
 	case StateReceive:
-		return m.receiveModel.View()
+		content = m.receiveModel.View()
 	case StateSettings:
-		return m.settingsModel.View()
+		content = m.settingsModel.View()
 	}
-	return ""
+
+	// Add Exit Confirmation Overlay/Append
+	if m.confirmExit {
+		content += "\n\n" + WarnStyle.Render("Press Ctrl+C again to exit")
+	}
+
+	return AppStyle.Render(content)
 }

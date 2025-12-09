@@ -122,10 +122,8 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// No, `listenTransfer(msg)` uses the message content.
 		// So we must store `TransferStartedMsg` in the model to reuse it?
 		// OR: The `listenTransfer` command can return a `Msg` that includes the channels for the NEXT step.
-
-		// Let's modify listenTransfer to return a Msg that *contains* the same channels + the data.
-		// OR simpler: Store `transferSub` in Model.
-		cmds = append(cmds, listenTransfer(m.transferSub)) // Re-issue the command to continue listening
+		// So we must store `transferSub` in Model.
+		cmds = append(cmds, m.waitForNextProgress())
 		return m, tea.Batch(cmds...)
 
 	case progress.FrameMsg:
@@ -135,6 +133,7 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TransferDoneMsg:
 		m.done = true
+		m.uploading = false
 		m.status = "Transfer Complete!"
 		return m, tea.Quit
 
@@ -150,7 +149,11 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m SendModel) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("%s\n\n%s", TitleStyle.Render("Error"), StatusStyle.Foreground(ColorError).Render(m.err.Error())) + "\nPress q to quit"
+		return fmt.Sprintf("\n%s\n\n%s\n\n%s",
+			TitleStyle.Render("Error"),
+			StatusStyle.Foreground(ColorError).Render(m.err.Error()),
+			HelpStyle.Render("Press Esc to retry"),
+		)
 	}
 
 	if m.done {

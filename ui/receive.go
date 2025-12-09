@@ -69,14 +69,26 @@ func (m ReceiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Connected! Receiving..."
 		return m, nil
 
+	case ErrorMsg:
+		m.err = msg
+		m.receiving = false
+		return m, nil
+
 	case TransferDoneMsg:
 		m.done = true
 		m.status = "Received File! (saved as 'received_file')"
 		return m, tea.Quit
+	}
 
-	case ErrorMsg:
-		m.err = msg
-		m.status = fmt.Sprintf("Error: %v", msg)
+	// Retry logic
+	if m.err != nil {
+		if msg, ok := msg.(tea.KeyMsg); ok && msg.Type == tea.KeyEsc {
+			m.err = nil
+			m.status = "Enter Wormhole Code:"
+			m.textInput.SetValue("")
+			m.textInput.Focus()
+			return m, nil
+		}
 		return m, nil
 	}
 
@@ -86,7 +98,11 @@ func (m ReceiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m ReceiveModel) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("%s\n\n%s", TitleStyle.Render("Error"), StatusStyle.Foreground(ColorError).Render(m.err.Error())) + "\nPress q to quit"
+		return fmt.Sprintf("\n%s\n\n%s\n\n%s",
+			TitleStyle.Render("Error"),
+			StatusStyle.Foreground(ColorError).Render(m.err.Error()),
+			HelpStyle.Render("Press Esc to retry"),
+		)
 	}
 	if m.done {
 		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status)) + "\n\nPress q to quit"

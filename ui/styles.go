@@ -57,4 +57,16 @@ var (
 	LogoStyle = lipgloss.NewStyle().
 			Bold(true).
 			MarginBottom(1)
+
+	// Main Application Container
+	AppStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorGoBlue).
+			Padding(1, 2).
+			Margin(1, 1).
+			Width(60) // Fixed width for cleaner look? Or adaptive?
+
+	WarnStyle = lipgloss.NewStyle().
+			Foreground(ColorError).
+			Bold(true)
 )
