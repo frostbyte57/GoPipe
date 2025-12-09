@@ -21,9 +21,9 @@
 
 ## Installation
 
-### Option 1: Download Binary (Recommended)
+### Option 1: Download Binary (Windows Only)
 You can simply download the pre-compiled binary for your system, make it executable, and run it.
-1. Go to the **[Releases](#)** page (link to your releases).
+1. Go to the **[Releases](https://github.com/frostbyte57/GoPipe/releases)** page.
 2. Download the version for your OS (e.g., `gopipe.exe` for Windows).
 3. Open your terminal and run it!
 
