@@ -16,6 +16,8 @@ const (
 	StateSettings
 )
 
+type BackToMenuMsg struct{}
+
 type Model struct {
 	state         State
 	choices       []string
@@ -57,8 +59,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If in Menu
 		if m.state == StateMenu {
 			switch msg.String() {
-			case "q":
-				return m, tea.Quit
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
@@ -70,9 +70,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter", " ":
 				if m.cursor == 0 {
 					m.state = StateSend
+					m.sendModel = NewSendModel(m.sendModel.mailboxURL)
 					return m, m.sendModel.Init()
 				} else if m.cursor == 1 {
 					m.state = StateReceive
+					m.receiveModel = NewReceiveModel(m.receiveModel.mailboxURL)
 					return m, m.receiveModel.Init()
 				} else {
 					m.state = StateSettings
@@ -81,6 +83,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+	case BackToMenuMsg:
+		m.state = StateMenu
+		return m, nil
+
 	}
 
 	switch m.state {
@@ -138,7 +145,7 @@ func (m Model) View() string {
 			s += fmt.Sprintf("%s%s\n", cursor, choiceStr)
 		}
 
-		s += HelpStyle.Render("\nPress q to quit.\n")
+		s += HelpStyle.Render("\nUse Up/Down to navigate, Enter to select.\n")
 		content = s
 	case StateSend:
 		content = m.sendModel.View()

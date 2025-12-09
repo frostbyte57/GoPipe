@@ -83,7 +83,7 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, startSend(filePath, m.mailboxURL)
 			}
 		case tea.KeyEsc:
-			return m, tea.Quit // Or return to main menu
+			return m, func() tea.Msg { return BackToMenuMsg{} }
 		}
 
 	case ConnectedMsg:
@@ -157,7 +157,7 @@ func (m SendModel) View() string {
 	}
 
 	if m.done {
-		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status)) + "\n\nPress q to quit"
+		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status))
 	}
 
 	if m.uploading {

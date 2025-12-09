@@ -62,7 +62,7 @@ func (m ReceiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, startReceive(code, m.mailboxURL)
 			}
 		case tea.KeyEsc:
-			return m, tea.Quit
+			return m, func() tea.Msg { return BackToMenuMsg{} }
 		}
 
 	case HandshakeSuccessMsg:
@@ -105,7 +105,7 @@ func (m ReceiveModel) View() string {
 		)
 	}
 	if m.done {
-		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status)) + "\n\nPress q to quit"
+		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status))
 	}
 
 	// Input State
