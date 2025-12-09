@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type State int
@@ -22,12 +23,12 @@ type Model struct {
 	receiveModel ReceiveModel
 }
 
-func InitialModel() Model {
+func InitialModel(mailboxURL string) Model {
 	return Model{
 		state:        StateMenu,
 		choices:      []string{"Send File", "Receive File"},
-		sendModel:    NewSendModel(),
-		receiveModel: NewReceiveModel(),
+		sendModel:    NewSendModel(mailboxURL),
+		receiveModel: NewReceiveModel(mailboxURL),
 	}
 }
 
@@ -94,18 +95,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	switch m.state {
 	case StateMenu:
-		s := "What would you like to do?\n\n"
+		s := RenderLogo() + "\n\n"
+		s += "What would you like to do?\n\n"
 
 		for i, choice := range m.choices {
-			cursor := " " // no cursor
+			cursor := "  "
 			if m.cursor == i {
-				cursor = ">" // cursor!
+				cursor = "> " // cursor
 			}
 
-			s += fmt.Sprintf("%s %s\n", cursor, choice)
+			// Style the cursor and choice
+			choiceStr := choice
+			if m.cursor == i {
+				cursor = lipgloss.NewStyle().Foreground(ColorPurple).Render("> ")
+				choiceStr = lipgloss.NewStyle().Foreground(ColorGoBlue).Bold(true).Render(choice)
+			}
+
+			s += fmt.Sprintf("%s%s\n", cursor, choiceStr)
 		}
 
-		s += "\nPress q to quit.\n"
+		s += HelpStyle.Render("\nPress q to quit.\n")
 		return s
 	case StateSend:
 		return m.sendModel.View()

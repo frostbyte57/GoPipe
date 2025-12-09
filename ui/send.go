@@ -8,31 +8,45 @@ import (
 
 	"github.com/frostbyte57/GoPipe/internal/wormhole"
 
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type SendModel struct {
-	client    *wormhole.Client
-	textInput textinput.Model
-	code      string
-	status    string
-	progress  float64
-	err       error
-	sending   bool
-	done      bool
+	client      *wormhole.Client
+	textInput   textinput.Model
+	progressBar progress.Model
+	code        string
+	status      string
+	progress    float64
+	err         error
+	sending     bool
+	uploading   bool // separate state for actual data transfer
+	done        bool
+	transferSub TransferStartedMsg
+	mailboxURL  string
 }
 
-func NewSendModel() SendModel {
+func NewSendModel(mailboxURL string) SendModel {
 	ti := textinput.New()
 	ti.Placeholder = "/path/to/file"
 	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = 40
+	// Style input
+	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorGoBlue)
+
+	prog := progress.New(progress.WithDefaultGradient())
+	prog.Width = 40
 
 	return SendModel{
-		textInput: ti,
-		status:    "Enter file path:",
+		textInput:   ti,
+		progressBar: prog,
+		status:      "Enter file path:",
+		mailboxURL:  mailboxURL,
 	}
 }
 
@@ -61,7 +75,7 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				filePath := m.textInput.Value()
 				m.sending = true
 				m.status = "Connecting..."
-				return m, startSend(filePath)
+				return m, startSend(filePath, m.mailboxURL)
 			}
 		case tea.KeyEsc:
 			return m, tea.Quit // Or return to main menu
@@ -75,12 +89,44 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case HandshakeSuccessMsg:
 		m.status = "Connected! Sending..."
-		return m, nil
+		m.uploading = true
+		// Trigger the actual transfer
+		return m, startTransfer(m.client, m.textInput.Value())
+
+	case TransferStartedMsg:
+		m.transferSub = msg
+		return m, listenTransfer(msg)
 
 	case ProgressMsg:
+		var cmds []tea.Cmd
 		m.progress = float64(msg)
-		// Update progress bar here if we had one
-		return m, nil
+
+		if m.progress >= 1.0 {
+			cmd := m.progressBar.SetPercent(1.0)
+			cmds = append(cmds, cmd)
+		} else {
+			cmd := m.progressBar.SetPercent(m.progress)
+			cmds = append(cmds, cmd)
+		}
+		// Continue listening!
+		// We need to keep polling the channel.
+		// Since `listenTransfer` returns ONE msg, we need to re-queue it.
+		// But `listenTransfer` takes the struct with channels. We didn't store it.
+		// We need to store the channels in the model or return a command that has them enclosed.
+		// Actually, `listenTransfer` is a closure if we implemented it right?
+		// No, `listenTransfer(msg)` uses the message content.
+		// So we must store `TransferStartedMsg` in the model to reuse it?
+		// OR: The `listenTransfer` command can return a `Msg` that includes the channels for the NEXT step.
+
+		// Let's modify listenTransfer to return a Msg that *contains* the same channels + the data.
+		// OR simpler: Store `transferSub` in Model.
+		cmds = append(cmds, listenTransfer(m.transferSub)) // Re-issue the command to continue listening
+		return m, tea.Batch(cmds...)
+
+	case progress.FrameMsg:
+		progressModel, cmd := m.progressBar.Update(msg)
+		m.progressBar = progressModel.(progress.Model)
+		return m, cmd
 
 	case TransferDoneMsg:
 		m.done = true
@@ -99,18 +145,40 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m SendModel) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\nPress q to quit", m.err)
+		return fmt.Sprintf("%s\n\n%s", TitleStyle.Render("Error"), StatusStyle.Foreground(ColorError).Render(m.err.Error())) + "\nPress q to quit"
 	}
+
 	if m.done {
-		return fmt.Sprintf("%s\n\nPress q to quit", m.status)
+		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status)) + "\n\nPress q to quit"
 	}
+
+	if m.uploading {
+		// Show progress bar
+		return fmt.Sprintf("\n%s\n\n%s\n\n%s",
+			TitleStyle.Render("Sending File..."),
+			m.progressBar.View(),
+			StatusStyle.Render(fmt.Sprintf("%.0f%%", m.progress*100)),
+		)
+	}
+
 	if m.code != "" {
-		return fmt.Sprintf("\nPLEASE TELL THE RECEIVER THIS CODE:\n\n    %s\n\n%s", m.code, m.status)
+		codeBox := CodeBoxStyle.Render(m.code)
+		return fmt.Sprintf("\n%s\n%s\n\n%s",
+			TitleStyle.Render("Ready to Send"),
+			codeBox,
+			StatusStyle.Render("Share this code with the receiver."),
+		)
 	}
-	return fmt.Sprintf("%s\n\n%s", m.status, m.textInput.View())
+
+	// Input State
+	return fmt.Sprintf("\n%s\n\n%s\n\n%s",
+		TitleStyle.Render("Send File"),
+		m.textInput.View(),
+		HelpStyle.Render("Enter absolute path to file"),
+	)
 }
 
-func startSend(filePath string) tea.Cmd {
+func startSend(filePath string, mailboxURL string) tea.Cmd {
 	return func() tea.Msg {
 		file, err := os.Open(filePath)
 		if err != nil {
@@ -120,7 +188,7 @@ func startSend(filePath string) tea.Cmd {
 		_ = stat.Size() // We store size later or pass it
 		file.Close()
 
-		c := wormhole.NewClient("")
+		c := wormhole.NewClient("", mailboxURL)
 		ctx := context.Background()
 
 		code, err := c.PrepareSend(ctx)
@@ -137,6 +205,11 @@ func startSend(filePath string) tea.Cmd {
 // We can chain commands.
 // Update: ConnectedMsg -> Trigger Handshake Cmd.
 
+// Helper to keep listening
+func (m SendModel) waitForNextProgress() tea.Cmd {
+	return listenTransfer(m.transferSub)
+}
+
 func waitForReceiver(c *wormhole.Client, filePath string, fileSize int64) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -145,28 +218,108 @@ func waitForReceiver(c *wormhole.Client, filePath string, fileSize int64) tea.Cm
 			return ErrorMsg(err)
 		}
 
-		conn, err := c.PerformTransfer(ctx)
-		if err != nil {
-			return ErrorMsg(err)
+		// CORRECT PATTERN:
+		// We need to break this down.
+		// `waitForReceiver` should ONLY do handshake.
+		// Then return `HandshakeSuccess`.
+
+		// The `PerformTransfer` (which negotiates) also needs to happen.
+		// Let's assume PerformTransfer is fast (negotiation).
+		// The DATA transfer is slow.
+
+		return HandshakeSuccessMsg(nil)
+	}
+}
+
+func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
+	return func() tea.Msg {
+		// We need to do the transfer here.
+		// But how to stream progress?
+		// We can use a `tea.Program` if we pass it, but we can't.
+
+		// Creating a channel for progress
+		progressChan := make(chan float64, 100)
+		errChan := make(chan error, 1)
+		doneChan := make(chan struct{})
+
+		go func() {
+			defer close(progressChan)
+			defer close(doneChan)
+
+			// We need to call PerformTransfer here if not called yet?
+			// Ideally we separate Handshake and Transfer in Client.
+			// Re-calling PerformTransfer might re-negotiate.
+			// Let's assume `waitForReceiver` returned after Handshake.
+			// We need `PerformTransfer` to get the connection.
+
+			ctx := context.Background()
+			conn, err := c.PerformTransfer(ctx)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			defer conn.Close()
+
+			file, err := os.Open(filePath)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			defer file.Close()
+			stat, _ := file.Stat()
+			total := stat.Size()
+
+			buf := make([]byte, 32*1024)
+			var current int64
+
+			for {
+				n, err := file.Read(buf)
+				if n > 0 {
+					_, wErr := conn.Write(buf[:n])
+					if wErr != nil {
+						errChan <- wErr
+						return
+					}
+					current += int64(n)
+					progressChan <- float64(current) / float64(total)
+				}
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					errChan <- err
+					return
+				}
+			}
+		}()
+
+		return TransferStartedMsg{
+			ProgressChan: progressChan,
+			ErrChan:      errChan,
+			DoneChan:     doneChan,
 		}
-		defer conn.Close()
+	}
+}
 
-		// Send file offer?
-		// Protocol: We just stream data for this MVP.
-		// Send file size first (8 bytes)
-		// Or assume stream is file.
+type TransferStartedMsg struct {
+	ProgressChan <-chan float64
+	ErrChan      <-chan error
+	DoneChan     <-chan struct{}
+}
 
-		file, err := os.Open(filePath)
-		if err != nil {
+// Command to listen to the channels
+func listenTransfer(sub TransferStartedMsg) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case p, ok := <-sub.ProgressChan:
+			if !ok {
+				return TransferDoneMsg{}
+			}
+			return ProgressMsg(p)
+		case err := <-sub.ErrChan:
 			return ErrorMsg(err)
+		case <-sub.DoneChan:
+			return TransferDoneMsg{}
 		}
-		defer file.Close()
-
-		_, err = io.Copy(conn, file)
-		if err != nil {
-			return ErrorMsg(err)
-		}
-
-		return TransferDoneMsg{}
 	}
 }

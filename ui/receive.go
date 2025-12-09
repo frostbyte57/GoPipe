@@ -10,27 +10,32 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type ReceiveModel struct {
-	client    *wormhole.Client
-	textInput textinput.Model
-	status    string
-	receiving bool
-	done      bool
-	err       error
+	client     *wormhole.Client
+	textInput  textinput.Model
+	status     string
+	receiving  bool
+	done       bool
+	err        error
+	mailboxURL string
 }
 
-func NewReceiveModel() ReceiveModel {
+func NewReceiveModel(mailboxURL string) ReceiveModel {
 	ti := textinput.New()
 	ti.Placeholder = "7-code-words"
 	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = 40
+	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorGoBlue)
 
 	return ReceiveModel{
-		textInput: ti,
-		status:    "Enter Wormhole Code:",
+		textInput:  ti,
+		status:     "Enter Wormhole Code:",
+		mailboxURL: mailboxURL,
 	}
 }
 
@@ -49,7 +54,7 @@ func (m ReceiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				code := m.textInput.Value()
 				m.receiving = true
 				m.status = "Connnecting..."
-				return m, startReceive(code)
+				return m, startReceive(code, m.mailboxURL)
 			}
 		case tea.KeyEsc:
 			return m, tea.Quit
@@ -76,17 +81,23 @@ func (m ReceiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m ReceiveModel) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\nPress q to quit", m.err)
+		return fmt.Sprintf("%s\n\n%s", TitleStyle.Render("Error"), StatusStyle.Foreground(ColorError).Render(m.err.Error())) + "\nPress q to quit"
 	}
 	if m.done {
-		return fmt.Sprintf("%s\n\nPress q to quit", m.status)
+		return fmt.Sprintf("\n%s\n\n%s", TitleStyle.Render("Success"), StatusStyle.Foreground(ColorSuccess).Render(m.status)) + "\n\nPress q to quit"
 	}
-	return fmt.Sprintf("%s\n\n%s", m.status, m.textInput.View())
+
+	// Input State
+	return fmt.Sprintf("\n%s\n\n%s\n\n%s",
+		TitleStyle.Render("Receive File"),
+		m.textInput.View(),
+		HelpStyle.Render("Enter Wormhole Code (e.g. 7-words)"),
+	)
 }
 
-func startReceive(code string) tea.Cmd {
+func startReceive(code string, mailboxURL string) tea.Cmd {
 	return func() tea.Msg {
-		c := wormhole.NewClient("")
+		c := wormhole.NewClient("", mailboxURL)
 		ctx := context.Background()
 
 		if err := c.PrepareReceive(ctx, code); err != nil {

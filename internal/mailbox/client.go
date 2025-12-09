@@ -10,7 +10,7 @@ import (
 	"nhooyr.io/websocket/wsjson"
 )
 
-const DefaultURL = "wss://relay.magic-wormhole.io:4000/v1"
+const DefaultURL = "ws://relay.magic-wormhole.io:4000/v1"
 
 type Client struct {
 	conn  *websocket.Conn

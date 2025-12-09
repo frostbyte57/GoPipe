@@ -35,14 +35,14 @@ type Client struct {
 	isSender bool
 }
 
-func NewClient(side string) *Client {
+func NewClient(side string, mailboxURL string) *Client {
 	if side == "" {
 		// randomize side
 		b, _ := crypto.RandomBytes(8)
 		side = hex.EncodeToString(b)
 	}
 	return &Client{
-		mail:  mailbox.NewClient("", AppID, side),
+		mail:  mailbox.NewClient(mailboxURL, AppID, side),
 		side:  side,
 		appID: AppID,
 	}
@@ -61,16 +61,25 @@ func (c *Client) PrepareSend(ctx context.Context) (code string, err error) {
 
 	// Wait for "allocated"
 	var allocated mailbox.AllocatedMessage
-	select {
-	case ev := <-c.mail.EventChan:
-		if msg, ok := ev.(mailbox.AllocatedMessage); ok {
-			allocated = msg
-		} else {
-			return "", fmt.Errorf("unexpected event waiting for allocated: %T", ev)
+	for {
+		select {
+		case ev := <-c.mail.EventChan:
+			if msg, ok := ev.(mailbox.AllocatedMessage); ok {
+				allocated = msg
+				goto Allocated
+			} else if _, ok := ev.(mailbox.WelcomeMessage); ok {
+				// Ignore welcome
+				continue
+			} else {
+				// For now, fail on other unexpected messages to be safe, or just log?
+				// Let's return error to catch weird states, but Welcome is expected.
+				return "", fmt.Errorf("unexpected event waiting for allocated: %T", ev)
+			}
+		case <-ctx.Done():
+			return "", ctx.Err()
 		}
-	case <-ctx.Done():
-		return "", ctx.Err()
 	}
+Allocated:
 
 	nameplate := allocated.Nameplate
 	// Claim it (technically allocate does claim, but for correctness with some servers?)
@@ -116,17 +125,22 @@ func (c *Client) PrepareReceive(ctx context.Context, code string) error {
 	}
 
 	// Wait for "claimed"
-	select {
-	case ev := <-c.mail.EventChan:
-		if _, ok := ev.(mailbox.ClaimedMessage); ok {
-			// good
-		} else {
-			// It might be possible to get other messages, but for now strict.
-			// Ideally we filter.
+	for {
+		select {
+		case ev := <-c.mail.EventChan:
+			if _, ok := ev.(mailbox.ClaimedMessage); ok {
+				goto Claimed
+			} else if _, ok := ev.(mailbox.WelcomeMessage); ok {
+				continue
+			} else {
+				// Strict for now
+				return fmt.Errorf("unexpected event waiting for claimed: %T", ev)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+Claimed:
 
 	return c.mail.Open(ctx, nameplate)
 }
@@ -177,6 +191,9 @@ func (c *Client) PerformHandshake(ctx context.Context) (key []byte, err error) {
 				return nil, fmt.Errorf("channel closed")
 			}
 			if m, ok := ev.(mailbox.MessageMessage); ok {
+				if m.Side == c.side {
+					continue // Ignore our own messages
+				}
 				if m.Phase == "pake" {
 					msgIn = m
 					found = true
@@ -235,6 +252,9 @@ func (c *Client) PerformTransfer(ctx context.Context) (io.ReadWriteCloser, error
 		select {
 		case ev := <-c.mail.EventChan:
 			if m, ok := ev.(mailbox.MessageMessage); ok {
+				if m.Side == c.side {
+					continue
+				}
 				if m.Phase == "transit" {
 					peerMsgBytes, _ = hex.DecodeString(m.Body)
 					found = true
