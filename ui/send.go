@@ -1,16 +1,10 @@
 package ui
 
 import (
-	"archive/zip"
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 
-	"github.com/frostbyte57/GoPipe/internal/transit"
 	"github.com/frostbyte57/GoPipe/internal/wormhole"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -229,139 +223,22 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 			defer close(progressChan)
 			defer close(doneChan)
 
-			ctx := context.Background()
-			conn, err := c.PerformTransfer(ctx)
+			// Bridge wormhole progress to UI progress msg
+			whProgressChan := make(chan wormhole.Progress, 100)
+			go func() {
+				for p := range whProgressChan {
+					progressChan <- TxProgressMsg{
+						Current: p.Current,
+						Total:   p.Total,
+						Ratio:   p.Ratio,
+					}
+				}
+			}()
+
+			err := c.SendFile(context.Background(), filePath, whProgressChan)
 			if err != nil {
 				errChan <- err
 				return
-			}
-			defer conn.Close()
-
-			info, err := os.Stat(filePath)
-			if err != nil {
-				errChan <- err
-				return
-			}
-
-			mode := "file"
-			if info.IsDir() {
-				mode = "dir"
-			}
-
-			var reader io.Reader
-			var size int64
-			var name string
-
-			if mode == "dir" {
-				pr, pw := io.Pipe()
-				reader = pr
-				name = filepath.Base(filePath) + ".zip"
-				size = 0
-				filepath.Walk(filePath, func(_ string, info os.FileInfo, err error) error {
-					if !info.IsDir() {
-						size += info.Size()
-					}
-					return nil
-				})
-
-				go func() {
-					zw := zip.NewWriter(pw)
-					baseDir := filepath.Dir(filePath) // parent
-					filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
-						if err != nil {
-							return err
-						}
-						header, err := zip.FileInfoHeader(info)
-						if err != nil {
-							return err
-						}
-						relPath, _ := filepath.Rel(baseDir, path)
-						header.Name = relPath
-
-						if info.IsDir() {
-							header.Name += "/"
-						} else {
-							header.Method = zip.Deflate
-						}
-
-						w, err := zw.CreateHeader(header)
-						if err != nil {
-							return err
-						}
-						if !info.IsDir() {
-							f, err := os.Open(path)
-							if err != nil {
-								return err
-							}
-							defer f.Close()
-							io.Copy(w, f)
-						}
-						return nil
-					})
-					zw.Close()
-					pw.Close()
-				}()
-
-			} else {
-				f, err := os.Open(filePath)
-				if err != nil {
-					errChan <- err
-					return
-				}
-				defer f.Close()
-				reader = f
-				size = info.Size()
-				name = info.Name()
-			}
-
-			meta := transit.Metadata{
-				Name: name,
-				Size: size,
-				Mode: mode,
-			}
-			metaBytes, _ := json.Marshal(meta)
-
-			metaLen := uint32(len(metaBytes))
-			lenBuf := make([]byte, 4)
-			binary.BigEndian.PutUint32(lenBuf, metaLen)
-
-			if _, err := conn.Write(lenBuf); err != nil {
-				errChan <- err
-				return
-			}
-			if _, err := conn.Write(metaBytes); err != nil {
-				errChan <- err
-				return
-			}
-
-			buf := make([]byte, 32*1024)
-			var current int64
-
-			for {
-				n, err := reader.Read(buf)
-				if n > 0 {
-					_, wErr := conn.Write(buf[:n])
-					if wErr != nil {
-						errChan <- wErr
-						return
-					}
-					current += int64(n)
-					if size > 0 {
-						ratio := float64(current) / float64(size)
-						progressChan <- TxProgressMsg{
-							Current: current,
-							Total:   size,
-							Ratio:   ratio,
-						}
-					}
-				}
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					errChan <- err
-					return
-				}
 			}
 		}()
 

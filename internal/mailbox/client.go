@@ -44,15 +44,13 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.conn = conn
 
-	// Need to read the "welcome" message first
+	// Read welcome message
 	var welcome WelcomeMessage
 	if err := wsjson.Read(ctx, c.conn, &welcome); err != nil {
 		return fmt.Errorf("failed to read welcome: %w", err)
 	}
 	c.EventChan <- welcome
-	// Verify welcome type? Protocol check?
 
-	// Send "bind"
 	bind := BindMessage{
 		Type:  "bind",
 		AppID: c.appID,
@@ -62,19 +60,15 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to send bind: %w", err)
 	}
 
-	// Start reading loop
 	go c.readLoop()
 	return nil
 }
 
 func (c *Client) readLoop() {
-	// ctx := context.Background() // TODO: inherit or manage
 	for {
 		var raw json.RawMessage
-		// Use a short timeout or context?
 		err := wsjson.Read(context.Background(), c.conn, &raw)
 		if err != nil {
-			// c.errChan <- err
 			close(c.EventChan)
 			return
 		}
@@ -98,16 +92,12 @@ func (c *Client) readLoop() {
 			json.Unmarshal(raw, &msg)
 			c.EventChan <- msg
 		case "welcome":
-			// Already handled but if it happens again?
 		case "error":
-			// TODO: Define ErrorMessage
 		case "ack":
-			// Ignored
 		}
 	}
 }
 
-// Low-level write
 func (c *Client) Write(ctx context.Context, v interface{}) error {
 	return wsjson.Write(ctx, c.conn, v)
 }

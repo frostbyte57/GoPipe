@@ -35,7 +35,6 @@ type Client struct {
 
 func NewClient(side string, mailboxURL string) *Client {
 	if side == "" {
-		// randomize side
 		b, _ := crypto.RandomBytes(8)
 		side = hex.EncodeToString(b)
 	}
@@ -66,11 +65,8 @@ func (c *Client) PrepareSend(ctx context.Context) (code string, err error) {
 				allocated = msg
 				goto Allocated
 			} else if _, ok := ev.(mailbox.WelcomeMessage); ok {
-				// Ignore welcome
 				continue
 			} else {
-				// For now, fail on other unexpected messages to be safe, or just log?
-				// Let's return error to catch weird states, but Welcome is expected.
 				return "", fmt.Errorf("unexpected event waiting for allocated: %T", ev)
 			}
 		case <-ctx.Done():
@@ -80,15 +76,10 @@ func (c *Client) PrepareSend(ctx context.Context) (code string, err error) {
 Allocated:
 
 	nameplate := allocated.Nameplate
-	// Claim it (technically allocate does claim, but for correctness with some servers?)
-	// Actually `allocate` returns a claimed nameplate.
-
-	// Generate Code
 	id, _ := strconv.Atoi(nameplate)
 	c.code = words.GenerateCode(id) // e.g. "7-foo-bar"
 	c.mailboxID = nameplate
 
-	// Now Open the mailbox
 	if err := c.mail.Open(ctx, nameplate); err != nil {
 		return "", err
 	}
@@ -100,8 +91,7 @@ Allocated:
 func (c *Client) PrepareReceive(ctx context.Context, code string) error {
 	c.isSender = false
 	c.code = code
-	// Parse mailbox ID from code (everything before the first hyphen)
-	// Simple parsing for now
+
 	var nameplate string
 	for i, r := range code {
 		if r == '-' {
@@ -122,7 +112,6 @@ func (c *Client) PrepareReceive(ctx context.Context, code string) error {
 		return err
 	}
 
-	// Wait for "claimed"
 	for {
 		select {
 		case ev := <-c.mail.EventChan:
@@ -131,7 +120,6 @@ func (c *Client) PrepareReceive(ctx context.Context, code string) error {
 			} else if _, ok := ev.(mailbox.WelcomeMessage); ok {
 				continue
 			} else {
-				// Strict for now
 				return fmt.Errorf("unexpected event waiting for claimed: %T", ev)
 			}
 		case <-ctx.Done():
@@ -149,16 +137,8 @@ func (c *Client) connect(ctx context.Context) error {
 
 // PerformHashshake executes SPAKE2.
 func (c *Client) PerformHandshake(ctx context.Context) (key []byte, err error) {
-	// Derive role based on side or context?
-	// To be simple: Sender (who generated code) acts as A, Receiver as B.
-	// But c.side is just a random string.
-	// We can detect role by checking if we have c.mailboxID matching c.code?
-	// Actually PrepareSend sets c.code. PrepareReceive sets c.code.
-	// We need to know if we are the "Leader" (Sender) or "Follower" (Receiver).
-	// Let's store role in Client.
-
 	pw := gospake2.NewPassword(c.code)
-	idA := gospake2.NewIdentityA("sender") // Arbitrary agreed strings
+	idA := gospake2.NewIdentityA("sender")
 	idB := gospake2.NewIdentityB("receiver")
 
 	var sp gospake2.SPAKE2
@@ -171,15 +151,12 @@ func (c *Client) PerformHandshake(ctx context.Context) (key []byte, err error) {
 
 	msgOut := sp.Start()
 
-	// Send "pake" message
-	// Hex encode the body
 	bodyHex := hex.EncodeToString(msgOut)
 	if err := c.mail.Add(ctx, "pake", bodyHex); err != nil {
 		return nil, err
 	}
 
 	// Wait for peer "pake"
-	// We need to loop on EventChan until we find the PAKE message
 	var msgIn mailbox.MessageMessage
 	found := false
 	for !found {
@@ -190,7 +167,7 @@ func (c *Client) PerformHandshake(ctx context.Context) (key []byte, err error) {
 			}
 			if m, ok := ev.(mailbox.MessageMessage); ok {
 				if m.Side == c.side {
-					continue // Ignore our own messages
+					continue
 				}
 				if m.Phase == "pake" {
 					msgIn = m
@@ -202,7 +179,6 @@ func (c *Client) PerformHandshake(ctx context.Context) (key []byte, err error) {
 		}
 	}
 
-	// Process peer message
 	peerBody, err := hex.DecodeString(msgIn.Body)
 	if err != nil {
 		return nil, err
@@ -217,21 +193,16 @@ func (c *Client) PerformHandshake(ctx context.Context) (key []byte, err error) {
 	return key, nil
 }
 
-// PerformTransfer handles the transit negotiation and connects data stream.
 func (c *Client) PerformTransfer(ctx context.Context) (io.ReadWriteCloser, error) {
-	// 1. Initialize Transit and get local hints
 	t := transit.NewTransit(c.key)
 	localHints, err := t.Start()
 	if err != nil {
 		return nil, fmt.Errorf("transit start failed: %w", err)
 	}
 
-	// 2. Encrypt and send hints to peer via Mailbox
-	// Phase: "transit"
 	msgStruct := transit.TransitMessage{Hints: localHints}
 	msgBytes, _ := json.Marshal(msgStruct)
 
-	// Encrypt the JSON payload with Session Key
 	encryptedHints, err := crypto.Encrypt(c.key, msgBytes)
 	if err != nil {
 		return nil, err
@@ -242,7 +213,6 @@ func (c *Client) PerformTransfer(ctx context.Context) (io.ReadWriteCloser, error
 		return nil, err
 	}
 
-	// 3. Receive peer hints
 	// Wait for phase "transit"
 	var peerMsgBytes []byte
 	found := false
@@ -263,7 +233,6 @@ func (c *Client) PerformTransfer(ctx context.Context) (io.ReadWriteCloser, error
 		}
 	}
 
-	// Decrypt peer hints
 	decryptedHints, err := crypto.Decrypt(c.key, peerMsgBytes)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt hints failed: %w", err)
@@ -274,7 +243,6 @@ func (c *Client) PerformTransfer(ctx context.Context) (io.ReadWriteCloser, error
 		return nil, err
 	}
 
-	// 4. Connect
 	if err := t.ConnectToPeer(ctx, peerTransitMsg.Hints); err != nil {
 		return nil, fmt.Errorf("transit connect failed: %w", err)
 	}
