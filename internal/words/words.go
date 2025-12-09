@@ -6,19 +6,8 @@ import (
 	"time"
 )
 
-var EvenWords = []string{
-	"acrobatch", "amusement", "anchor", "animal", "answer", "antlers", "anvil", "apollo",
-	"approval", "april", "arlington", "article", "artist", "ascot", "assist", "athens",
-	"atmosphere", "atom", "attack", "attempt", "atlantic", "atomic", "attitude", "away",
-	"baboon", "baby", "badminton", "balance", "balcony", "ballad", "ballerina", "balloon",
-	// ... we need 256 to be correct for 1 byte entropy per word
-}
-
-var OddWords = []string{
-	"adroitness", "adviser", "aftermath", "aggregate", "alkali", "almighty", "amulet", "amusement",
-	"antenna", "applicant", "apollo", "armistice", "article", "asteroid", "atlantic", "atmosphere",
-	// ...
-}
+// EvenWords and OddWords were for the PGP Wordlist (standard Magic Wormhole).
+// Since we switched to numeric codes, these are no longer needed.
 
 // For a proper implementation, I should fill this.
 // But since the user wants "my implementation", I can use a simpler code scheme
