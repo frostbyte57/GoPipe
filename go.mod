@@ -1,4 +1,4 @@
-module gopipe
+module github.com/frostbyte57/GoPipe
 
 go 1.24.1
 
