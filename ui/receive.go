@@ -2,10 +2,15 @@ package ui
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
+	"github.com/frostbyte57/GoPipe/internal/config"
+	"github.com/frostbyte57/GoPipe/internal/transit"
 	"github.com/frostbyte57/GoPipe/internal/wormhole"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -115,8 +120,37 @@ func startReceive(code string, mailboxURL string) tea.Cmd {
 		}
 		defer conn.Close()
 
-		// Receive file
-		out, err := os.Create("received_file") // Simple default name
+		// Receive Metadata
+		// 1. Read 4 bytes length
+		lenBuf := make([]byte, 4)
+		if _, err := io.ReadFull(conn, lenBuf); err != nil {
+			return ErrorMsg(err)
+		}
+		metaLen := binary.BigEndian.Uint32(lenBuf)
+
+		// 2. Read Metadata JSON
+		metaBuf := make([]byte, metaLen)
+		if _, err := io.ReadFull(conn, metaBuf); err != nil {
+			return ErrorMsg(err)
+		}
+
+		var meta transit.Metadata
+		if err := json.Unmarshal(metaBuf, &meta); err != nil {
+			return ErrorMsg(err)
+		}
+
+		// Determine Output Path
+		// Load config or use default
+		cfg, _ := config.LoadConfig()
+		outDir := "."
+		if cfg != nil && cfg.DownloadDir != "" {
+			outDir = cfg.DownloadDir
+		}
+
+		outPath := filepath.Join(outDir, meta.Name)
+
+		// Receive file content
+		out, err := os.Create(outPath)
 		if err != nil {
 			return ErrorMsg(err)
 		}

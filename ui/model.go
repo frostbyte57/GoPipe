@@ -13,22 +13,25 @@ const (
 	StateMenu State = iota
 	StateSend
 	StateReceive
+	StateSettings
 )
 
 type Model struct {
-	state        State
-	choices      []string
-	cursor       int
-	sendModel    SendModel
-	receiveModel ReceiveModel
+	state         State
+	choices       []string
+	cursor        int
+	sendModel     SendModel
+	receiveModel  ReceiveModel
+	settingsModel SettingsModel
 }
 
 func InitialModel(mailboxURL string) Model {
 	return Model{
-		state:        StateMenu,
-		choices:      []string{"Send File", "Receive File"},
-		sendModel:    NewSendModel(mailboxURL),
-		receiveModel: NewReceiveModel(mailboxURL),
+		state:         StateMenu,
+		choices:       []string{"Send File", "Receive File", "Settings"},
+		sendModel:     NewSendModel(mailboxURL),
+		receiveModel:  NewReceiveModel(mailboxURL),
+		settingsModel: NewSettingsModel(),
 	}
 }
 
@@ -61,9 +64,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursor == 0 {
 					m.state = StateSend
 					return m, m.sendModel.Init()
-				} else {
+				} else if m.cursor == 1 {
 					m.state = StateReceive
 					return m, m.receiveModel.Init()
+				} else {
+					m.state = StateSettings
+					// Init settings model? We don't have one yet.
+					return m, nil
 				}
 			}
 		}
@@ -86,6 +93,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StateReceive:
 		newM, newCmd := m.receiveModel.Update(msg)
 		m.receiveModel = newM.(ReceiveModel)
+		return m, newCmd
+
+	case StateSettings:
+		newM, newCmd := m.settingsModel.Update(msg)
+		m.settingsModel = newM
+		// Check for exit
+		if msg, ok := msg.(tea.KeyMsg); ok && msg.Type == tea.KeyEsc {
+			m.state = StateMenu
+		}
 		return m, newCmd
 	}
 
@@ -120,6 +136,8 @@ func (m Model) View() string {
 		return m.sendModel.View()
 	case StateReceive:
 		return m.receiveModel.View()
+	case StateSettings:
+		return m.settingsModel.View()
 	}
 	return ""
 }

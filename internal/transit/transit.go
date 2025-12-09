@@ -10,6 +10,12 @@ import (
 	"github.com/frostbyte57/GoPipe/internal/crypto"
 )
 
+type Metadata struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Mode string `json:"mode"` // "file" or "dir"
+}
+
 // Transit handles the data connection.
 type Transit struct {
 	sessionKey []byte

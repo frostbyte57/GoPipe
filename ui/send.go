@@ -1,11 +1,16 @@
 package ui
 
 import (
+	"archive/zip"
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
+	"github.com/frostbyte57/GoPipe/internal/transit"
 	"github.com/frostbyte57/GoPipe/internal/wormhole"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -260,20 +265,135 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 			}
 			defer conn.Close()
 
-			file, err := os.Open(filePath)
+			info, err := os.Stat(filePath)
 			if err != nil {
 				errChan <- err
 				return
 			}
-			defer file.Close()
-			stat, _ := file.Stat()
-			total := stat.Size()
 
+			// Determine mode and output stream
+			mode := "file"
+			if info.IsDir() {
+				mode = "dir"
+			}
+
+			// If dir, we zip it. If file, send as is.
+			// But wait, user wants original format.
+			// We always send metadata first.
+
+			var reader io.Reader
+			var size int64
+			var name string
+
+			if mode == "dir" {
+				// Create a pipe to stream zip
+				pr, pw := io.Pipe()
+				reader = pr
+				// We don't know total zip size ahead of time without buffering.
+				// For progress bar:
+				// 1. Walk dir to count total bytes of files.
+				// 2. Use that as estimation for progress.
+
+				// Calculate total size of files to zip
+				name = filepath.Base(filePath) + ".zip"
+				// size = ??? (unknown compressed size)
+				// We'll set size to 0 or estimated uncompressed size?
+				// Receiver uses size for progress.
+				// Let's set size to total uncompressed size.
+				size = 0
+				filepath.Walk(filePath, func(_ string, info os.FileInfo, err error) error {
+					if !info.IsDir() {
+						size += info.Size()
+					}
+					return nil
+				})
+
+				go func() {
+					zw := zip.NewWriter(pw)
+					baseDir := filepath.Dir(filePath) // parent
+					filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						// Create header
+						header, err := zip.FileInfoHeader(info)
+						if err != nil {
+							return err
+						}
+						// modify name to be relative
+						relPath, _ := filepath.Rel(baseDir, path)
+						header.Name = relPath
+
+						if info.IsDir() {
+							header.Name += "/"
+						} else {
+							header.Method = zip.Deflate
+						}
+
+						w, err := zw.CreateHeader(header)
+						if err != nil {
+							return err
+						}
+						if !info.IsDir() {
+							f, err := os.Open(path)
+							if err != nil {
+								return err
+							}
+							defer f.Close()
+							io.Copy(w, f)
+						}
+						return nil
+					})
+					zw.Close()
+					pw.Close()
+				}()
+
+			} else {
+				// File
+				f, err := os.Open(filePath)
+				if err != nil {
+					errChan <- err
+					return
+				}
+				defer f.Close()
+				reader = f
+				size = info.Size()
+				name = info.Name()
+			}
+
+			// Send Metadata
+			meta := transit.Metadata{
+				Name: name,
+				Size: size,
+				Mode: mode,
+			}
+			metaBytes, _ := json.Marshal(meta)
+
+			// Frame it: [4 bytes len][json]
+			// We can reuse EncryptedConn but we need to send this raw bytes via conn first?
+			// Wait, conn IS EncryptedConn (io.ReadWriteCloser interface).
+			// So we just write to it.
+
+			// Write Metadata Length (4 bytes)
+			metaLen := uint32(len(metaBytes))
+			lenBuf := make([]byte, 4)
+			binary.BigEndian.PutUint32(lenBuf, metaLen)
+
+			if _, err := conn.Write(lenBuf); err != nil {
+				errChan <- err
+				return
+			}
+			if _, err := conn.Write(metaBytes); err != nil {
+				errChan <- err
+				return
+			}
+
+			// Send Content
 			buf := make([]byte, 32*1024)
 			var current int64
 
 			for {
-				n, err := file.Read(buf)
+				n, err := reader.Read(buf)
 				if n > 0 {
 					_, wErr := conn.Write(buf[:n])
 					if wErr != nil {
@@ -281,7 +401,9 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 						return
 					}
 					current += int64(n)
-					progressChan <- float64(current) / float64(total)
+					if size > 0 {
+						progressChan <- float64(current) / float64(size)
+					}
 				}
 				if err == io.EOF {
 					break
