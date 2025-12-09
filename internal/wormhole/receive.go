@@ -1,6 +1,7 @@
 package wormhole
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -69,12 +70,15 @@ func (c *Client) ReceiveFile(ctx context.Context, outDir string, progressCh chan
 	}
 	defer out.Close()
 
+	outWriter := bufio.NewWriterSize(out, 64*1024*1024)
+	defer outWriter.Flush()
+
 	var received int64
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, 1024*1024)
 	for {
 		n, rErr := conn.Read(buf)
 		if n > 0 {
-			_, wErr := out.Write(buf[:n])
+			_, wErr := outWriter.Write(buf[:n])
 			if wErr != nil {
 				return "", wErr
 			}

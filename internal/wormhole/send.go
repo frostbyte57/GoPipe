@@ -2,6 +2,7 @@ package wormhole
 
 import (
 	"archive/zip"
+	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -124,11 +125,12 @@ func (c *Client) SendFile(ctx context.Context, filePath string, progressCh chan<
 	}
 
 	// Transfer Data
-	buf := make([]byte, 32*1024)
+	bufReader := bufio.NewReaderSize(reader, 64*1024*1024)
+	buf := make([]byte, 1024*1024) // Can likely use smaller buffer since reader is buffered, but keeping 1MB for chunk size to lower overhead
 	var current int64
 
 	for {
-		n, err := reader.Read(buf)
+		n, err := bufReader.Read(buf)
 		if n > 0 {
 			_, wErr := conn.Write(buf[:n])
 			if wErr != nil {

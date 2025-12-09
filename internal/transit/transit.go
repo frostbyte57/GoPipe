@@ -1,6 +1,7 @@
 package transit
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -76,6 +77,13 @@ func (t *Transit) acceptLoop() {
 		if err != nil {
 			return
 		}
+
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			_ = tcpConn.SetReadBuffer(4 * 1024 * 1024)
+			_ = tcpConn.SetWriteBuffer(4 * 1024 * 1024)
+			_ = tcpConn.SetNoDelay(true)
+		}
+
 		// In a real implementation, we would handshake here to confirm it's the right peer.
 		// For this MVP, we assume the first connection is the peer (RISKY but simple).
 		// Better: Exchange a nonce encrypted with sessionKey.
@@ -102,6 +110,12 @@ func (t *Transit) ConnectToPeer(ctx context.Context, hints []string) error {
 		d := net.Dialer{Timeout: 2 * time.Second}
 		conn, err := d.DialContext(ctx, "tcp", hint)
 		if err == nil {
+			// Tune TCP connection
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetReadBuffer(4 * 1024 * 1024)
+				_ = tcpConn.SetWriteBuffer(4 * 1024 * 1024)
+				_ = tcpConn.SetNoDelay(true)
+			}
 			t.conn = conn
 			if t.listener != nil {
 				t.listener.Close()
@@ -143,15 +157,21 @@ func (t *Transit) SecureConnection() (io.ReadWriteCloser, error) {
 	// TODO: Wrap with NaCl SecretBox stream?
 	// A simple block-based framing: [4 bytes len][nonce][ciphertext]
 	return &EncryptedConn{
-		conn: t.conn,
-		key:  t.sessionKey,
+		conn:      t.conn,
+		key:       t.sessionKey,
+		msgReader: bufio.NewReaderSize(t.conn, 64*1024*1024),
+		msgWriter: bufio.NewWriterSize(t.conn, 64*1024*1024),
 	}, nil
 }
 
 type EncryptedConn struct {
 	conn net.Conn
 	key  []byte
-	buf  []byte // read buffer
+	buf  []byte // read buffer for decrypted data (leftover)
+
+	// Buffered writers/readers for the underlying connection
+	msgReader *bufio.Reader
+	msgWriter *bufio.Writer
 }
 
 func (ec *EncryptedConn) Write(p []byte) (n int, err error) {
@@ -168,12 +188,14 @@ func (ec *EncryptedConn) Write(p []byte) (n int, err error) {
 	header[2] = byte(length >> 8)
 	header[3] = byte(length)
 
-	_, err = ec.conn.Write(header)
-	if err != nil {
+	// Write to buffer
+	if _, err := ec.msgWriter.Write(header); err != nil {
 		return 0, err
 	}
-	_, err = ec.conn.Write(encrypted)
-	if err != nil {
+	if _, err := ec.msgWriter.Write(encrypted); err != nil {
+		return 0, err
+	}
+	if err := ec.msgWriter.Flush(); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -189,7 +211,7 @@ func (ec *EncryptedConn) Read(p []byte) (n int, err error) {
 
 	// Read Header
 	header := make([]byte, 4)
-	if _, err := io.ReadFull(ec.conn, header); err != nil {
+	if _, err := io.ReadFull(ec.msgReader, header); err != nil {
 		return 0, err
 	}
 	length := uint32(header[0])<<24 | uint32(header[1])<<16 | uint32(header[2])<<8 | uint32(header[3])
@@ -200,7 +222,7 @@ func (ec *EncryptedConn) Read(p []byte) (n int, err error) {
 	}
 
 	encrypted := make([]byte, length)
-	if _, err := io.ReadFull(ec.conn, encrypted); err != nil {
+	if _, err := io.ReadFull(ec.msgReader, encrypted); err != nil {
 		return 0, err
 	}
 
