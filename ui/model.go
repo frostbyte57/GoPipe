@@ -16,8 +16,6 @@ const (
 	StateSettings
 )
 
-type BackToMenuMsg struct{}
-
 type Model struct {
 	state         State
 	choices       []string

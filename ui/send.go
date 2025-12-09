@@ -26,12 +26,20 @@ type SendModel struct {
 	code        string
 	status      string
 	progress    float64
+	sentBytes   int64
+	totalBytes  int64
 	err         error
 	sending     bool
-	uploading   bool // separate state for actual data transfer
+	uploading   bool
 	done        bool
 	transferSub TransferStartedMsg
 	mailboxURL  string
+}
+
+type TransferStartedMsg struct {
+	ProgressChan <-chan TxProgressMsg
+	ErrChan      <-chan error
+	DoneChan     <-chan struct{}
 }
 
 func NewSendModel(mailboxURL string) SendModel {
@@ -40,12 +48,12 @@ func NewSendModel(mailboxURL string) SendModel {
 	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = 40
-	// Style input
 	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorGoBlue)
 
 	prog := progress.New(progress.WithDefaultGradient())
 	prog.Width = 40
+	prog.ShowPercentage = false
 
 	return SendModel{
 		textInput:   ti,
@@ -58,16 +66,6 @@ func NewSendModel(mailboxURL string) SendModel {
 func (m SendModel) Init() tea.Cmd {
 	return textinput.Blink
 }
-
-type CodeGeneratedMsg string
-type ConnectedMsg struct {
-	Code   string
-	Client *wormhole.Client
-}
-type HandshakeSuccessMsg []byte
-type ProgressMsg float64
-type TransferDoneMsg struct{}
-type ErrorMsg error
 
 func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -95,16 +93,17 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HandshakeSuccessMsg:
 		m.status = "Connected! Sending..."
 		m.uploading = true
-		// Trigger the actual transfer
 		return m, startTransfer(m.client, m.textInput.Value())
 
 	case TransferStartedMsg:
 		m.transferSub = msg
 		return m, listenTransfer(msg)
 
-	case ProgressMsg:
+	case TxProgressMsg:
 		var cmds []tea.Cmd
-		m.progress = float64(msg)
+		m.progress = msg.Ratio
+		m.sentBytes = msg.Current
+		m.totalBytes = msg.Total
 
 		if m.progress >= 1.0 {
 			cmd := m.progressBar.SetPercent(1.0)
@@ -113,16 +112,6 @@ func (m SendModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.progressBar.SetPercent(m.progress)
 			cmds = append(cmds, cmd)
 		}
-		// Continue listening!
-		// We need to keep polling the channel.
-		// Since `listenTransfer` returns ONE msg, we need to re-queue it.
-		// But `listenTransfer` takes the struct with channels. We didn't store it.
-		// We need to store the channels in the model or return a command that has them enclosed.
-		// Actually, `listenTransfer` is a closure if we implemented it right?
-		// No, `listenTransfer(msg)` uses the message content.
-		// So we must store `TransferStartedMsg` in the model to reuse it?
-		// OR: The `listenTransfer` command can return a `Msg` that includes the channels for the NEXT step.
-		// So we must store `transferSub` in Model.
 		cmds = append(cmds, m.waitForNextProgress())
 		return m, tea.Batch(cmds...)
 
@@ -161,11 +150,13 @@ func (m SendModel) View() string {
 	}
 
 	if m.uploading {
-		// Show progress bar
 		return fmt.Sprintf("\n%s\n\n%s\n\n%s",
 			TitleStyle.Render("Sending File..."),
 			m.progressBar.View(),
-			StatusStyle.Render(fmt.Sprintf("%.0f%%", m.progress*100)),
+			StatusStyle.Render(fmt.Sprintf("%s / %s (%.0f%%)",
+				byteCountBinary(m.sentBytes),
+				byteCountBinary(m.totalBytes),
+				m.progress*100)),
 		)
 	}
 
@@ -193,7 +184,7 @@ func startSend(filePath string, mailboxURL string) tea.Cmd {
 			return ErrorMsg(err)
 		}
 		stat, _ := file.Stat()
-		_ = stat.Size() // We store size later or pass it
+		_ = stat.Size()
 		file.Close()
 
 		c := wormhole.NewClient("", mailboxURL)
@@ -208,12 +199,6 @@ func startSend(filePath string, mailboxURL string) tea.Cmd {
 	}
 }
 
-// Separate command for the rest of the flow...
-// This is tricky in Bubble Tea without a state machine manager.
-// We can chain commands.
-// Update: ConnectedMsg -> Trigger Handshake Cmd.
-
-// Helper to keep listening
 func (m SendModel) waitForNextProgress() tea.Cmd {
 	return listenTransfer(m.transferSub)
 }
@@ -225,40 +210,19 @@ func waitForReceiver(c *wormhole.Client, filePath string, fileSize int64) tea.Cm
 		if err != nil {
 			return ErrorMsg(err)
 		}
-
-		// CORRECT PATTERN:
-		// We need to break this down.
-		// `waitForReceiver` should ONLY do handshake.
-		// Then return `HandshakeSuccess`.
-
-		// The `PerformTransfer` (which negotiates) also needs to happen.
-		// Let's assume PerformTransfer is fast (negotiation).
-		// The DATA transfer is slow.
-
 		return HandshakeSuccessMsg(nil)
 	}
 }
 
 func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 	return func() tea.Msg {
-		// We need to do the transfer here.
-		// But how to stream progress?
-		// We can use a `tea.Program` if we pass it, but we can't.
-
-		// Creating a channel for progress
-		progressChan := make(chan float64, 100)
+		progressChan := make(chan TxProgressMsg, 100)
 		errChan := make(chan error, 1)
 		doneChan := make(chan struct{})
 
 		go func() {
 			defer close(progressChan)
 			defer close(doneChan)
-
-			// We need to call PerformTransfer here if not called yet?
-			// Ideally we separate Handshake and Transfer in Client.
-			// Re-calling PerformTransfer might re-negotiate.
-			// Let's assume `waitForReceiver` returned after Handshake.
-			// We need `PerformTransfer` to get the connection.
 
 			ctx := context.Background()
 			conn, err := c.PerformTransfer(ctx)
@@ -274,35 +238,19 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 				return
 			}
 
-			// Determine mode and output stream
 			mode := "file"
 			if info.IsDir() {
 				mode = "dir"
 			}
-
-			// If dir, we zip it. If file, send as is.
-			// But wait, user wants original format.
-			// We always send metadata first.
 
 			var reader io.Reader
 			var size int64
 			var name string
 
 			if mode == "dir" {
-				// Create a pipe to stream zip
 				pr, pw := io.Pipe()
 				reader = pr
-				// We don't know total zip size ahead of time without buffering.
-				// For progress bar:
-				// 1. Walk dir to count total bytes of files.
-				// 2. Use that as estimation for progress.
-
-				// Calculate total size of files to zip
 				name = filepath.Base(filePath) + ".zip"
-				// size = ??? (unknown compressed size)
-				// We'll set size to 0 or estimated uncompressed size?
-				// Receiver uses size for progress.
-				// Let's set size to total uncompressed size.
 				size = 0
 				filepath.Walk(filePath, func(_ string, info os.FileInfo, err error) error {
 					if !info.IsDir() {
@@ -318,12 +266,10 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 						if err != nil {
 							return err
 						}
-						// Create header
 						header, err := zip.FileInfoHeader(info)
 						if err != nil {
 							return err
 						}
-						// modify name to be relative
 						relPath, _ := filepath.Rel(baseDir, path)
 						header.Name = relPath
 
@@ -352,7 +298,6 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 				}()
 
 			} else {
-				// File
 				f, err := os.Open(filePath)
 				if err != nil {
 					errChan <- err
@@ -364,7 +309,6 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 				name = info.Name()
 			}
 
-			// Send Metadata
 			meta := transit.Metadata{
 				Name: name,
 				Size: size,
@@ -372,12 +316,6 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 			}
 			metaBytes, _ := json.Marshal(meta)
 
-			// Frame it: [4 bytes len][json]
-			// We can reuse EncryptedConn but we need to send this raw bytes via conn first?
-			// Wait, conn IS EncryptedConn (io.ReadWriteCloser interface).
-			// So we just write to it.
-
-			// Write Metadata Length (4 bytes)
 			metaLen := uint32(len(metaBytes))
 			lenBuf := make([]byte, 4)
 			binary.BigEndian.PutUint32(lenBuf, metaLen)
@@ -391,7 +329,6 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 				return
 			}
 
-			// Send Content
 			buf := make([]byte, 32*1024)
 			var current int64
 
@@ -405,7 +342,12 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 					}
 					current += int64(n)
 					if size > 0 {
-						progressChan <- float64(current) / float64(size)
+						ratio := float64(current) / float64(size)
+						progressChan <- TxProgressMsg{
+							Current: current,
+							Total:   size,
+							Ratio:   ratio,
+						}
 					}
 				}
 				if err == io.EOF {
@@ -426,13 +368,6 @@ func startTransfer(c *wormhole.Client, filePath string) tea.Cmd {
 	}
 }
 
-type TransferStartedMsg struct {
-	ProgressChan <-chan float64
-	ErrChan      <-chan error
-	DoneChan     <-chan struct{}
-}
-
-// Command to listen to the channels
 func listenTransfer(sub TransferStartedMsg) tea.Cmd {
 	return func() tea.Msg {
 		select {
@@ -440,11 +375,24 @@ func listenTransfer(sub TransferStartedMsg) tea.Cmd {
 			if !ok {
 				return TransferDoneMsg{}
 			}
-			return ProgressMsg(p)
+			return p
 		case err := <-sub.ErrChan:
 			return ErrorMsg(err)
 		case <-sub.DoneChan:
 			return TransferDoneMsg{}
 		}
 	}
+}
+
+func byteCountBinary(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }

@@ -50,8 +50,7 @@ var (
 			BorderForeground(ColorSurface).
 			Padding(0, 1)
 
-	FocusedInputStyle = InputStyle.Copy().
-				BorderForeground(ColorGoBlue)
+	FocusedInputStyle = InputStyle.BorderForeground(ColorGoBlue)
 
 	// Logo Style for Gradient (simulation via separate chars or block)
 	LogoStyle = lipgloss.NewStyle().
