@@ -28,10 +28,8 @@ type Client struct {
 	code      string
 	mailboxID string
 
-	spake2 *gospake2.SPAKE2
-	key    []byte // Session key
-
-	verifier []byte // Verifier to confirm key
+	spake2   *gospake2.SPAKE2
+	key      []byte // Session key
 	isSender bool
 }
 
