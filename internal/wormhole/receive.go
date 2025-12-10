@@ -50,11 +50,17 @@ func (c *Client) ReceiveFile(ctx context.Context, outDir string, progressCh chan
 	if outDir == "" {
 		outDir = "."
 	}
-	outPath := filepath.Join(outDir, meta.Name)
+	// Security: Sanitize filename to prevent path traversal
+	cleanName := filepath.Base(meta.Name)
+	if cleanName == "." || cleanName == string(filepath.Separator) {
+		cleanName = "downloaded_file"
+	}
+
+	outPath := filepath.Join(outDir, cleanName)
 
 	// Auto-rename if exists
-	ext := filepath.Ext(meta.Name)
-	nameOnly := meta.Name[:len(meta.Name)-len(ext)]
+	ext := filepath.Ext(cleanName)
+	nameOnly := cleanName[:len(cleanName)-len(ext)]
 	counter := 1
 	for {
 		if _, err := os.Stat(outPath); os.IsNotExist(err) {
