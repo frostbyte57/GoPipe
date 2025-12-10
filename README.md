@@ -34,6 +34,13 @@ If you have Go installed on your machine, you can install it directly:
 go install github.com/frostbyte57/GoPipe/cmd/gopipe@latest
 ```
 
+**macOS / Linux Users:**
+If you run `gopipe` and get a `command not found` error, add the Go bin to your path permanently:
+> ```bash
+> echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.zshrc
+> source ~/.zshrc
+> ```
+
 ## 🎮 Usage
 
 Simply run the command in your terminal:
