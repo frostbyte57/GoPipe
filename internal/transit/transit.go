@@ -35,9 +35,7 @@ func NewTransit(sessionKey []byte) *Transit {
 	}
 }
 
-// Start prepares the transit: listens on a port and returns our hints.
 func (t *Transit) Start() ([]string, error) {
-	// Listen on random port
 	l, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return nil, err
@@ -60,12 +58,6 @@ func (t *Transit) Start() ([]string, error) {
 			}
 		}
 	}
-	// Also add localhost for local testing
-	hints = append(hints, fmt.Sprintf("127.0.0.1:%d", port))
-
-	t.localHints = hints
-
-	// Start accepting in background
 	go t.acceptLoop()
 
 	return hints, nil
@@ -84,27 +76,16 @@ func (t *Transit) acceptLoop() {
 			_ = tcpConn.SetNoDelay(true)
 		}
 
-		// In a real implementation, we would handshake here to confirm it's the right peer.
-		// For this MVP, we assume the first connection is the peer (RISKY but simple).
-		// Better: Exchange a nonce encrypted with sessionKey.
 		t.conn = conn
-		t.listener.Close() // Stop listening once connected
-		return
+		t.listener.Close()
 	}
 }
 
-// ConnectToPeer tries to connect to one of the peer hints.
 func (t *Transit) ConnectToPeer(ctx context.Context, hints []string) error {
-	// Try establishing connection to hints. All in parallel or serial?
-	// Serial for simplicity.
 
-	// If we already accepted a connection (race), we use that.
 	if t.conn != nil {
 		return nil
 	}
-
-	// Logic: We should try to connect. If we succeed, we use it.
-	// Validating the connection is crucial.
 
 	for _, hint := range hints {
 		d := net.Dialer{Timeout: 2 * time.Second}
@@ -124,8 +105,6 @@ func (t *Transit) ConnectToPeer(ctx context.Context, hints []string) error {
 		}
 	}
 
-	// Wait for incoming connection if strictly peer-to-peer faltered?
-	// In this simplified logic, we just wait a bit to see if acceptLoop got something.
 	timeout := time.After(5 * time.Second)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -144,18 +123,10 @@ func (t *Transit) ConnectToPeer(ctx context.Context, hints []string) error {
 	}
 }
 
-// Encrypt/Decrypt stream logic would go here.
-// For now, we will just treat the connection as the secure stream
-// (assuming we wrap it in a secure channel, but we just have raw TCP here).
-// REAL IMPLEMENTATION MUST WRAP THIS.
-// I will implement a basic EncryptedConn wrapper using the session key.
-
 func (t *Transit) SecureConnection() (io.ReadWriteCloser, error) {
 	if t.conn == nil {
 		return nil, fmt.Errorf("no connection")
 	}
-	// TODO: Wrap with NaCl SecretBox stream?
-	// A simple block-based framing: [4 bytes len][nonce][ciphertext]
 	return &EncryptedConn{
 		conn:      t.conn,
 		key:       t.sessionKey,
@@ -169,7 +140,6 @@ type EncryptedConn struct {
 	key  []byte
 	buf  []byte // read buffer for decrypted data (leftover)
 
-	// Buffered writers/readers for the underlying connection
 	msgReader *bufio.Reader
 	msgWriter *bufio.Writer
 }
@@ -216,7 +186,6 @@ func (ec *EncryptedConn) Read(p []byte) (n int, err error) {
 	}
 	length := uint32(header[0])<<24 | uint32(header[1])<<16 | uint32(header[2])<<8 | uint32(header[3])
 
-	// Limit max size
 	if length > 100*1024*1024 { // 100MB chunk max
 		return 0, fmt.Errorf("chunk too large")
 	}

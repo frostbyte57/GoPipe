@@ -91,6 +91,3 @@ type MessageMessage struct {
 	ID    string `json:"id"`
 	Body  string `json:"body"`
 }
-
-// Responses (ack/error) typically handled generically or specific types?
-// Usually simple "ack" or "error"

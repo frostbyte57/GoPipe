@@ -11,11 +11,7 @@ type ProgressReader struct {
 	Reader  io.Reader
 	Total   int64
 	Current int64
-	Program *tea.Program // We need to send messages to the program
-	// BUT, we can't safely access Program from a goroutine if we are IN the update loop logic usually?
-	// Actually, tea.Program.Send() is thread-safe.
-	// Alternatively, we can use a channel if we run this in a command.
-	// Better yet: passing a callback channel.
+	Program *tea.Program 
 
 	OnProgress func(float64)
 }

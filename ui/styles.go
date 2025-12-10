@@ -5,14 +5,12 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	// Colors
 	// Go Blue: #00ADD8
-	// Purple: #9D7CD8 (Soft Purple) or #7D56F4 (Vibrant)
 	ColorGoBlue     = lipgloss.Color("#00ADD8")
 	ColorPurple     = lipgloss.Color("#7D56F4")
 	ColorSubtle     = lipgloss.Color("#626262")
 	ColorBackground = lipgloss.Color("#1C1B1F")
 	ColorSurface    = lipgloss.Color("#49454F")
-	ColorSuccess    = lipgloss.Color("#00ADD8") // Success is also Blue (Go style) instead of Green? Or keep Green.
-	// Let's keep Success Green for semantics, or Cyanish.
+	ColorSuccess    = lipgloss.Color("#00ADD8") 
 	ColorText  = lipgloss.Color("#FFFFFF")
 	ColorError = lipgloss.Color("#FF5F87")
 	ColorGreen = lipgloss.Color("#04B575")
